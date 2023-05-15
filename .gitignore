@@ -3,4 +3,6 @@
 *.sh
 dataset
 *pycache*
+config.ini
+model_conf
 
