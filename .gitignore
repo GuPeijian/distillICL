@@ -1,0 +1,6 @@
+.vscode
+.output
+*.sh
+dataset
+*pycache*
+
