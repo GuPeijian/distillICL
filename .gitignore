@@ -5,4 +5,6 @@ dataset
 *pycache*
 config.ini
 model_conf
-
+logs
+output
+runs

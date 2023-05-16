@@ -1,4 +1,4 @@
-from .prompt_utils import make_prompt,make_instruction
+from .prompt_utils import make_prompt,make_instruction,make_prompt_eval
 import random
 
 def process_input(dataset,tokenizer,batch:list):
@@ -54,3 +54,27 @@ def get_label_ids(dataset,tokenizer):
         label_verb_token_id = tokenizer.encode(' ' + label_verb,return_token_type_ids=False)["input_ids"][-1]
         label_ids.append(label_verb_token_id)
     return label_ids
+
+def process_input_eval(train_dataset,eval_dataset,tokenizer,batch:list):
+    #get instruction
+    instruction=make_instruction(train_dataset)
+    instruction_tokens=tokenizer.encode(instruction,return_tensors="pd",return_token_type_ids=False)["input_ids"]
+
+    input_tokens=[]
+    example_positions=[]
+    label_positions=[]
+    label=[]
+
+    for index in batch:
+        prompt=make_prompt_eval(train_dataset,eval_dataset,index)
+        prompt_tokens=[]
+        for piece in prompt["template"]:
+            prompt_tokens.append(tokenizer.encode(piece,return_tensors="pd",return_token_type_ids=False)["input_ids"])
+        input_tokens.append(prompt_tokens)
+        example_positions.append(prompt["input_index"])
+        label_positions.append(prompt["label_index"])
+        label.append(eval_dataset.label2id[eval_dataset[index]["label"]])
+    
+    return instruction_tokens,input_tokens,example_positions,label,label_positions
+
+

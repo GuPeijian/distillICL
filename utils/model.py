@@ -20,8 +20,8 @@ class distillmodel(nn.Layer):
             nn.GELU(),
             nn.Linear(self.mlp_hidden_size,self.hidden_size)
         )
-        self.reduce_mode=config.reduce_mode
-        self.pad_token_id=config.pad_token_id
+        self.config=config
+        
 
     def get_embedding(self, input_ids):
         """
@@ -68,7 +68,7 @@ class distillmodel(nn.Layer):
                                 attention_mask=attention_mask,
                                 return_dict=True).logits
         #gather label logits
-        label_logits=paddle.gather(logits,label_ids,axis=-1)
+        label_logits=paddle.gather(logits,label_ids,axis=2)
         return label_logits
         
     def get_logits(self, logits, label_positions):
@@ -102,10 +102,16 @@ class distillmodel(nn.Layer):
         consider both distill loss for unlabeled example and CE loss for labeled example
         """
         #KL loss
-        prob_s=F.softmax(logits_s)
-        prob_t=F.softmax(logits_t)
-        kl_st=F.kl_div(prob_s,prob_t)
-        kl_ts=F.kl_div(prob_t,prob_s)
+        prob_s=F.softmax(logits_s,)
+        prob_t=F.softmax(logits_t,)
+        def kl_loss(p1,p2):
+            log_p1=paddle.log(p1)
+            log_p2=paddle.log(p2)
+            kl_d=paddle.mean(paddle.sum((log_p2-log_p1)*p2,axis=1))
+            return kl_d
+
+        kl_st=kl_loss(prob_s,prob_t)
+        kl_ts=kl_loss(prob_t,prob_s)
         loss=(kl_st+kl_ts)/2
 
         #CE loss
@@ -139,7 +145,7 @@ class distillmodel(nn.Layer):
             attention_mask_item=[1]*output_item.shape[1]
             #pad
             if pad_length[i] > 0:
-                pad_item=[self.pad_token_id] * pad_length[i]
+                pad_item=[self.config.pad_token_id] * pad_length[i]
                 pad_item=paddle.to_tensor(pad_item,place=paddle.CPUPlace())
                 pad_item=paddle.to_tensor(pad_item,place=instruction.place)
                 pad_item=pad_item.unsqueeze(0)
@@ -216,7 +222,7 @@ class distillmodel(nn.Layer):
                 _tokens=input_tokens[batch_i][example_i]
                 length.append(_tokens.shape[-1])
                 example_tokens.append(_tokens)
-        example_embeds=self.length_reduce(example_tokens,length,mode=self.reduce_mode)
+        example_embeds=self.length_reduce(example_tokens,length,mode=self.config.reduce_mode)
         example_embeds_iter=iter(example_embeds)
         #combine different part
         reduced_embeds=[]
