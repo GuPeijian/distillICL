@@ -104,6 +104,14 @@ class SST2Dataset(BASEDataset):
         self.label2id = {'0': 0, '1': 1}
         self.label2verb = {'0': 'negative', '1': 'positive'}
         self.id2verb = ['negative', 'positive']
+    def get_texts(self):
+        text_list=[]
+        for i in range(len(self.label_data)):
+            text_item=[]
+            item=self.label_data[i]
+            text_item.append(item["sentence"])
+            text_list.append(text_item)
+        return text_list
 
 
 class SUBJDataset(BASEDataset):
@@ -121,6 +129,14 @@ class SUBJDataset(BASEDataset):
         self.label2verb = {'0': 'subjective', '1': 'objective'}
         self.id2verb = ['subjective', 'objective']
 
+    def get_texts(self):
+        text_list=[]
+        for i in range(len(self.label_data)):
+            text_item=[]
+            item=self.label_data[i]
+            text_item.append(item["sentence"])
+            text_list.append(text_item)
+        return text_list
 
 class AGNEWSDataset(BASEDataset):
     def __init__(

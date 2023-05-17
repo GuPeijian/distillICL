@@ -81,12 +81,13 @@ class distillmodel(nn.Layer):
         output_embeds=paddle.split(output_embeds,output_embeds.shape[0],axis=0)
         return output_embeds
 
-
-    def reduce_padding(self,inputs_tokens,length):
+    def reduce_padding(self,inputs_tokens,length,mode="train"):
         max_length=max(length)
         num_input=len(length)
         output=[]
         output_mask=[]
+        if mode=="cl":
+            input_vectors=[]
         for i in range(num_input):
             item=inputs_tokens[i]
             pad_len=max_length-length[i]
@@ -99,6 +100,8 @@ class distillmodel(nn.Layer):
                 attention_mask=[0]*pad_len + attention_mask
             #get embedding
             item_embeds=self.get_embedding(item)
+            if mode=="cl":
+                input_vectors.append(paddle.mean(item_embeds,axis=1)) #[1,d]
             #pad special toekn
             output_embeds=paddle.concat((item_embeds,self.special_token.unsqueeze(0)),axis=1) # [1,L,d]
             #update attention_mask
@@ -106,8 +109,49 @@ class distillmodel(nn.Layer):
             attention_mask=paddle.to_tensor(attention_mask)
             #output
             output.append(output_embeds)
-            output_mask.append(attention_mask.unsqueeze(0)) 
+            output_mask.append(attention_mask.unsqueeze(0))
+        if mode=="cl":
+            return paddle.concat(output,axis=0), paddle.concat(output_mask,axis=0), paddle.concat(input_vectors,axis=0) #[N,L,d],[N,L],[N,d]
         return paddle.concat(output,axis=0), paddle.concat(output_mask,axis=0)#[N,L,d],[N,L]
+
+    def constructive_reduce(self,inputs_tokens):
+        """
+        do constructive learning for examples between reduced embedding and input embedding
+        """
+        length=[]
+        for i in range(len(inputs_tokens)):
+            length.append(inputs_tokens[i].shape[1])
+        inputs_embeds,attention_mask,input_vectors=self.reduce_padding(inputs_tokens,length,mode="cl")
+        hidden_states=self.LLM_no_head(
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            return_dict=True).last_hidden_state #[N,k,d]
+        output_embeds=hidden_states[:,-self.config.k:,:]
+        
+        loss=self.cl_loss(input_vectors.detach(),output_embeds)
+
+        return loss
+
+    def cl_loss(self,input_vectors,reduced_embeds):
+        """
+        calculate constructive loss between input_embeds and output_embeds
+        """
+        #get one embedding
+        reduced_vectors=paddle.mean(reduced_embeds,axis=1) #[N d]
+        #calcu dot product
+        dot_porduct=paddle.einsum("ik,jk->ij",reduced_vectors,input_vectors)
+        #calcu norm
+        reduced_norm=paddle.linalg.norm(reduced_vectors,p=2,axis=1)
+        input_norm=paddle.linalg.norm(input_vectors,p=2,axis=1)
+
+        dot_porduct=dot_porduct/reduced_norm.unsqueeze(1) #div by row
+        dot_porduct=dot_porduct/input_norm.unsqueeze(0) #div by 
+
+        #loss of reduce to input
+        reduce_to_input=nn.functional.softmax(dot_porduct,axis=1)
+        loss=paddle.mean(-paddle.log(paddle.diagonal(reduce_to_input)))
+
+        return loss
 
 
     def icl_predict(self, input_ids, inputs_embeds, attention_mask, label_ids):

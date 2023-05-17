@@ -25,7 +25,7 @@ from paddlenlp.transformers import (
 from paddle.optimizer import AdamW
 from paddle.optimizer.lr import OneCycleLR
 from utils.dataset_utils import SST2Dataset,SUBJDataset
-from utils.data_utils import process_input,get_label_ids,process_input_eval
+from utils.data_utils import process_input,get_label_ids,process_input_eval,process_input_cl
 from utils.model import distillmodel
 
 def set_seed(seed):
@@ -65,6 +65,11 @@ def parse_args():
     )
     parser.add_argument(
         "--train",
+        type=bool,
+        default=True,
+    )
+    parser.add_argument(
+        "--cl",
         type=bool,
         default=True,
     )
@@ -211,6 +216,8 @@ def main():
 
         #optimizer
         max_train_steps = args.num_train_epochs * len(train_dataloader)
+        if args.cl:
+            max_train_steps+=args.num_train_epochs
         lr_scheduler = OneCycleLR(
             max_learning_rate=args.learning_rate,
             phase_pct=args.warmup_ratio,
@@ -241,7 +248,25 @@ def main():
         total_loss=0.0
         last_loss=0.0
 
+        #prepare n shot example for cl
+        if args.cl:
+            n_shot_tokens=process_input_cl(train_dataset,tokenizer)
+
         for epoch in range(args.num_train_epochs):
+            if args.cl:
+                loss=model.constructive_reduce(n_shot_tokens)
+                loss.backward()
+                optimizer.step()
+                lr_scheduler.step()
+                completed_steps+=1
+                loss=float(loss.cpu().numpy())
+                logger.info(f"steps: {completed_steps}/{max_train_steps},"
+                            f" epoch: {epoch}/{args.num_train_epochs},"
+                            f" lr: {lr_scheduler.get_lr():.2e},"
+                            f" cl_loss: {loss},")
+                writer.add_scalar('cl_loss', loss, epoch+1)
+                writer.add_scalar('lr', lr_scheduler.get_lr(), completed_steps)
+
             for step,batch in enumerate(train_dataloader):
                 batch=batch.tolist()
                 #process each item
@@ -267,7 +292,7 @@ def main():
                 
                 #log loss
                 loss=float(loss.cpu().numpy())
-                writer.add_scalar('p', loss, completed_steps)
+                writer.add_scalar('loss', loss, completed_steps)
                 writer.add_scalar('lr', lr_scheduler.get_lr(), completed_steps)
                 total_loss+=loss
 
@@ -345,16 +370,17 @@ def main():
     with open(save_results_file, 'a+', newline='') as csvfile:
         csvwriter = csv.writer(csvfile)
         if not csv_exists:
-            csvwriter.writerow(['dataset','seed','N','n_shot','k','epoch','bs','lr','alpha','beta','acc_N','acc_n_shot'])
+            csvwriter.writerow(['dataset','seed','N','n_shot','k','cl','epoch','bs','lr','alpha','beta','acc_N','acc_n_shot'])
         csvwriter.writerow([args.dataset_name,
                             args.seed,
                             args.N,
                             args.n_shot,
                             args.k,
+                            args.cl,
                             args.num_train_epochs,
                             args.train_batch_size,
                             args.learning_rate,
-                            args.alpah,
+                            args.alpha,
                             args.beta,
                             acc_N,
                             acc_n_shot

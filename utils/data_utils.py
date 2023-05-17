@@ -84,4 +84,11 @@ def process_input_eval(train_dataset,eval_dataset,tokenizer,batch:list,mode="N")
     
     return instruction_tokens,input_tokens,example_positions,label,label_positions
 
-
+def process_input_cl(train_dataset,tokenizer):
+    texts=train_dataset.get_texts()
+    output_tokens=[]
+    for example in texts:
+        for item in example:
+            item_tokens=tokenizer.encode(item,return_tensors="pd",return_token_type_ids=False)["input_ids"]
+            output_tokens.append(item_tokens)
+    return output_tokens
