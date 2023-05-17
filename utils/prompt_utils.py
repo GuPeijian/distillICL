@@ -57,7 +57,7 @@ def make_prompt(dataset, ids, mode='train'):
     return prompt
 
 
-def make_prompt_eval(train_dataset,eval_dataset,test_id):
+def make_prompt_eval(train_dataset,eval_dataset,test_id,mode="N"):
     dataset_name=train_dataset.dataset_name
     if dataset_name == 'sst2':
         template_func = template_sst2
@@ -68,11 +68,19 @@ def make_prompt_eval(train_dataset,eval_dataset,test_id):
     template=[]
     input_index=[]
     label_index=[]
-    for n,ins in enumerate(train_dataset.label_data):
+
+    if mode=="N":
+        example_pool=train_dataset.data
+    elif mode=="n_shot":
+        example_pool=train_dataset.label_data
+    else:
+        raise ValueError("mode need to be N or n-shot")
+
+    for n,ins in enumerate(example_pool):
         _prompt=template_func(ins, train_dataset.label2verb[ins['label']], 'train')
         _template=_prompt["template"]
         _input_index=_prompt["input_index"]
-        _label_index=_prompt["label_index"]
+        #_label_index=_prompt["label_index"]
 
         #add previous length for index
         prev_length=len(template)

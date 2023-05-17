@@ -3,10 +3,38 @@ import paddle.nn as nn
 from paddle.io import DataLoader,TensorDataset
 from utils.model import distillmodel
 from collections import namedtuple
-# import paddlenlp
-# import random
-from paddlenlp.transformers import GPTTokenizer
-paddle.device.set_device("gpu:6")
+import random
+from paddlenlp.transformers import GPTTokenizer,GPTLMHeadModel
+paddle.device.set_device("gpu:4")
+
+class distillmodel(nn.Layer):
+    def __init__(self, llm_path):
+        super(distillmodel,self).__init__()
+        """
+        init LLM and single MLP layer
+        """
+        self.LLM=GPTLMHeadModel.from_pretrained(llm_path)
+        #k special token
+        vocab_size=self.LLM.config.vocab_size
+        self.special_token=paddle.create_parameter([4,self.LLM.config.hidden_size],dtype="float32")
+        #sample 4 random token in LLM embedding to initialize
+        ids=random.sample([i for i in range(vocab_size)],4)
+        ids=paddle.to_tensor(ids)
+        self.tensor=self.get_embedding(ids).detach()
+        nn.utils.vector_to_parameters(self.tensor.reshape((1,-1)).squeeze(0),[self.special_token])
+    
+    def get_embedding(self, input_ids):
+        """
+        get LLM embedding for each input ids
+        """
+        return self.LLM.get_input_embeddings()(input_ids)
+
+a=distillmodel("gpt2-xl")
+
+print()
+
+
+
 
 # tokenizer=GPTTokenizer.from_pretrained("gpt2-xl")
 
@@ -31,22 +59,3 @@ paddle.device.set_device("gpu:6")
 #         return self.w2(x2)
     
 # a=net(5)
-
-x1=paddle.rand((2,5))
-
-x2=paddle.rand((2,5))
-
-p1=nn.functional.softmax(x1,axis=1)
-
-p2=nn.functional.softmax(x2,axis=1)
-
-log_p1=paddle.log(p1)
-log_p2=paddle.log(p2)
-
-kl_d=nn.functional.kl_div(log_p1,p2)
-
-print(kl_d)
-l=paddle.mean((log_p2-log_p1)*p2)
-k=paddle.mean(paddle.sum((log_p2-log_p1)*p2,axis=1))
-
-print(l)

@@ -57,7 +57,7 @@ class BASEDataset(Dataset):
                 sampled_data.append(self.unlabel_data[id-len(self.label_data)])
         self.sampled_data=sampled_data
 
-    def subsamplebyshot(self, n_shot, seed, exclude=None):
+    def subsamplebyshot(self, n_shot, N, seed, exclude=None):
         # exclude
         if exclude is not None:
             for ins in exclude:
@@ -71,22 +71,26 @@ class BASEDataset(Dataset):
             data_by_cls[self.label2id[self.data[i]['label']]].append(self.data[i])
         # evenly sample n examples from each category
         data_subsample = []
-        data_subsample_list = []
+        #get n-shot subset
+        n_shot_subsample_list=[]
+        n_shot_subsample=[]
+        left_subsample=[]
+
         for cls in data_by_cls.keys():
-            data_subsampled_by_cls = random.sample(data_by_cls[cls], min(n_shot, len(data_by_cls[cls])))
-            data_subsample_list.append(data_subsampled_by_cls)
+            data_subsampled_by_cls = random.sample(data_by_cls[cls], min(N, len(data_by_cls[cls])))
             data_subsample.extend(data_subsampled_by_cls)
-            #remove from self.data
-            for ins in data_subsampled_by_cls:
-                self.data.remove(ins)
+            n_shot_subsample_list.append(data_subsampled_by_cls[:n_shot])
+            n_shot_subsample.extend(data_subsampled_by_cls[:n_shot])
+            left_subsample.extend(data_subsampled_by_cls[n_shot:])
+        
         self.n_shot=n_shot
-        self.label_data_list = data_subsample_list
-        self.label_data=data_subsample
 
-    def subsample(self,N):
-        self.unlabel_data=random.sample(self.data,min(N,len(self.data)))
+        self.data=data_subsample
+        self.label_data_list = n_shot_subsample_list
+        self.label_data=n_shot_subsample
+        self.unlabel_data=left_subsample
 
-  
+
 class SST2Dataset(BASEDataset):
     def __init__(
         self,

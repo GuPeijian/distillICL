@@ -76,12 +76,12 @@ def parse_args():
     parser.add_argument(
         "--train_batch_size",
         type=int,
-        default=16,
+        default=8,
     )
     parser.add_argument(
         "--eval_batch_size",
         type=int,
-        default=32,
+        default=16,
     )
     parser.add_argument(
         "--n_shot",
@@ -91,7 +91,12 @@ def parse_args():
     parser.add_argument(
         "--N",
         type=int,
-        default=1024,
+        default=64,
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=4,
     )
     parser.add_argument(
         "--lr_scheduler_type",
@@ -105,7 +110,16 @@ def parse_args():
         type=float,
         default=0.06,
     )
-    
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=1.0,
+    )
+    parser.add_argument(
+        "--beta",
+        type=float,
+        default=0.0,
+    )
     parser.add_argument(
         "--weight_decay",
         type=float,
@@ -142,7 +156,7 @@ def main():
         set_seed(args.seed)
 
     #set device
-    paddle.device.set_device("gpu:6")
+    paddle.device.set_device("gpu:0")
 
     #load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.llm_dir)
@@ -154,9 +168,11 @@ def main():
     config={}
     config["llm_path"]=args.llm_dir
     config["CEloss"]=False
-    config["alpha"]=0
-    config["reduce_mode"]="mean"
+    config["alpha"]=args.alpha
+    config["beta"]=args.beta
+    config["k"]=args.k
     config["pad_token_id"]= tokenizer.pad_token_id
+    config["max_length"]=args.max_length
 
     A=namedtuple("A",config.keys())
     config=A(**config)
@@ -166,15 +182,13 @@ def main():
     #load dataset
     train_dataset=SUBJDataset(args.data_path,'train')
     #subsample
-    train_dataset.subsamplebyshot(n_shot=args.n_shot,seed=args.seed)
+    train_dataset.subsamplebyshot(n_shot=args.n_shot,N=args.N,seed=args.seed)
 
     #get label_ids
     label_ids=get_label_ids(train_dataset,tokenizer)
     label_ids=paddle.to_tensor(label_ids)
     
     if args.train:
-
-        train_dataset.subsample(N=args.N)
 
         num_train=len(train_dataset.label_data) + len(train_dataset.unlabel_data)
 
@@ -205,14 +219,10 @@ def main():
             anneal_strategy="linear",
         )
         #parameters
-        no_weight_decay=["bias"]
+        no_update=["LLM"]
         optimizer_grouped_parameters = [
             {
-                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_weight_decay)],
-                "weight_decay": 0.0,
-            },
-            {
-                "params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_weight_decay)],
+                "params": [p for n, p in model.named_parameters() if not any(nd in n for nd in no_update)],
                 "weight_decay": 0.0,
             },
         ]
@@ -237,13 +247,17 @@ def main():
                 #process each item
                 instruction_tokens,input_tokens,example_positions,label,label_positions=process_input(train_dataset,tokenizer,batch)
                 
+                if label is not None:
+                    # to tensor
+                    label=paddle.to_tensor(label) #[N]
+
                 loss,_=model(instruction_tokens=instruction_tokens,
                         input_tokens=input_tokens,
                         example_positions=example_positions,
                         label_ids=label_ids,
                         label=label,
                         label_positions=label_positions)
-                loss=loss*10
+                
                 # optimize
                 loss.backward()
                 optimizer.step()
@@ -266,37 +280,24 @@ def main():
                     time_log = time.time()
                     last_loss=total_loss
 
-
-        save_dir = os.path.join(args.output_dir, args.dataset_name+f"/{args.seed}") 
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        state_dict=model.MLP.state_dict()
-        paddle.save(state_dict,os.path.join(save_dir,"MLP.pdparams"))
-
     #eval
     test_dataset=SUBJDataset(args.data_path,'test')
     model.eval()
 
-    if not args.train:
-        #load model
-        save_dir = os.path.join(args.output_dir, args.dataset_name+f"/{args.seed}")
-        save_path=os.path.join(save_dir,"MLP.pdparams")
-        state_dict=paddle.load(save_path)
-        logger.info("***** load model *****")
-        model.load_dict(state_dict)
-
     #shuffle label data
     random.shuffle(train_dataset.label_data)
+    #shuffle data
+    random.shuffle(train_dataset.data)
     index=[i for i in range(len(test_dataset))]
 
     num_iter=math.ceil(len(test_dataset)/args.eval_batch_size)
 
-    num_tp=0
+    num_tp_N=0
+    num_tp_n_shot=0
 
     for i in tqdm(range(num_iter)):
         batch=index[i*args.eval_batch_size:(i+1)*args.eval_batch_size]
-        instruction_tokens,input_tokens,example_positions,label,label_positions=process_input_eval(train_dataset,test_dataset,tokenizer,batch)
+        instruction_tokens,input_tokens,example_positions,label,label_positions=process_input_eval(train_dataset,test_dataset,tokenizer,batch,"N")
         with paddle.no_grad():
             _,logits=model(instruction_tokens=instruction_tokens,
                         input_tokens=input_tokens,
@@ -312,11 +313,52 @@ def main():
 
         for n,pred in enumerate(preds):
             if pred == label[n]:
-                num_tp+=1
+                num_tp_N+=1
 
-    acc=num_tp/len(test_dataset)
 
-    print(acc)
+    for i in tqdm(range(num_iter)):
+        batch=index[i*args.eval_batch_size:(i+1)*args.eval_batch_size]
+        instruction_tokens,input_tokens,example_positions,label,label_positions=process_input_eval(train_dataset,test_dataset,tokenizer,batch,"n_shot")
+        with paddle.no_grad():
+            _,logits=model(instruction_tokens=instruction_tokens,
+                        input_tokens=input_tokens,
+                        example_positions=example_positions,
+                        label_ids=label_ids,
+                        label=label,
+                        label_positions=label_positions,
+                        mode="eval")
+        
+        assert logits.shape[0]==len(label)
+
+        preds=paddle.argmax(logits,axis=1).cpu().tolist()
+
+        for n,pred in enumerate(preds):
+            if pred == label[n]:
+                num_tp_n_shot+=1
+
+    acc_N=num_tp_N/len(test_dataset)
+
+    acc_n_shot=num_tp_n_shot/len(test_dataset)
+
+    save_results_file = os.path.join(args.output_dir, 'results.csv')
+    csv_exists = os.path.isfile(save_results_file)
+    with open(save_results_file, 'a+', newline='') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        if not csv_exists:
+            csvwriter.writerow(['dataset','seed','N','n_shot','k','epoch','bs','lr','alpha','beta','acc_N','acc_n_shot'])
+        csvwriter.writerow([args.dataset_name,
+                            args.seed,
+                            args.N,
+                            args.n_shot,
+                            args.k,
+                            args.num_train_epochs,
+                            args.train_batch_size,
+                            args.learning_rate,
+                            args.alpah,
+                            args.beta,
+                            acc_N,
+                            acc_n_shot
+                            ])
 
 
 

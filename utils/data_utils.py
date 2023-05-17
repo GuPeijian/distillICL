@@ -11,6 +11,7 @@ def process_input(dataset,tokenizer,batch:list):
 
     input_tokens=[]
     example_positions=[]
+    label=[] # consider the last label
     label_positions=[]
 
     for index in batch:
@@ -23,9 +24,12 @@ def process_input(dataset,tokenizer,batch:list):
             input_tokens.append(prompt_tokens)
             example_positions.append(prompt["input_index"])
             label_positions.append(prompt["label_index"])
+            #label
+            label_item=dataset.label2id[dataset.label_data[index]["label"]]
+            label.append(label_item)
         else:
             # (1,..,n/4)-shot example
-            max_shot=dataset.n_shot//4
+            max_shot=dataset.n_shot
             #sample shot
             shot=random.randint(1,max_shot)
             #sample label ids for shot
@@ -45,8 +49,11 @@ def process_input(dataset,tokenizer,batch:list):
             example_positions.append(prompt["input_index"])
             #only consider last loss
             label_positions.append(prompt["label_index"][-1:])
-        
-    return instruction_tokens,input_tokens,example_positions,None,label_positions
+            #label
+            label_item=dataset.label2id[dataset.unlabel_data[index-length_label_data]["label"]]
+            label.append(label_item)
+
+    return instruction_tokens,input_tokens,example_positions,label,label_positions
 
 def get_label_ids(dataset,tokenizer):
     label_ids=[]
@@ -55,7 +62,7 @@ def get_label_ids(dataset,tokenizer):
         label_ids.append(label_verb_token_id)
     return label_ids
 
-def process_input_eval(train_dataset,eval_dataset,tokenizer,batch:list):
+def process_input_eval(train_dataset,eval_dataset,tokenizer,batch:list,mode="N"):
     #get instruction
     instruction=make_instruction(train_dataset)
     instruction_tokens=tokenizer.encode(instruction,return_tensors="pd",return_token_type_ids=False)["input_ids"]
@@ -66,7 +73,7 @@ def process_input_eval(train_dataset,eval_dataset,tokenizer,batch:list):
     label=[]
 
     for index in batch:
-        prompt=make_prompt_eval(train_dataset,eval_dataset,index)
+        prompt=make_prompt_eval(train_dataset,eval_dataset,index,mode)
         prompt_tokens=[]
         for piece in prompt["template"]:
             prompt_tokens.append(tokenizer.encode(piece,return_tensors="pd",return_token_type_ids=False)["input_ids"])
