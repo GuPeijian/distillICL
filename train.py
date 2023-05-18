@@ -70,8 +70,7 @@ def parse_args():
     )
     parser.add_argument(
         "--cl",
-        type=bool,
-        default=True,
+        action="store_True",
     )
     parser.add_argument(
         "--learning_rate",
